@@ -1,0 +1,4 @@
+tanakenAlert({"items":[
+  {"title":"\u72ac\u732b\u751f\u6d3b\u30c6\u30b9\u30c8","publishDate":"2026/07/26 09:00:00","files":[{"type":"PDF-GENERAL","url":"https://example.test/inuneko-new.pdf","size":"100","page":"1"}]},
+  {"title":"Fixture Inuneko Old Item","publishDate":"2026/07/23 09:00:00","files":[{"type":"HTML-GENERAL","url":"https://example.test/inuneko-old.html","size":"0","page":"0"}]}
+]});

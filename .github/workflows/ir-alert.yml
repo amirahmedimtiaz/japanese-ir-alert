@@ -1,0 +1,99 @@
+name: Japanese IR email alert
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: japanese-ir-alert
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TANAKEN_URL: https://www.tanaken-1982.co.jp/ja/ir.html
+      INUNEKO_URL: https://corp.inuneko-seikatsu.co.jp/ir/
+      STATE_FILE: state/seen.txt
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes build-essential libcurl4-openssl-dev
+
+      - name: Build and run fixture tests
+        run: make test
+
+      - name: Validate email configuration
+        env:
+          SMTP_URL: ${{ secrets.SMTP_URL }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: |
+          set -eu
+          test -n "$SMTP_URL"
+          test -n "$ALERT_FROM"
+          test -n "$ALERT_TO"
+          if [ -n "$SMTP_USERNAME" ] || [ -n "$SMTP_PASSWORD" ]; then
+            test -n "$SMTP_USERNAME"
+            test -n "$SMTP_PASSWORD"
+          fi
+
+      - name: Check announcements and send alerts
+        env:
+          SMTP_URL: ${{ secrets.SMTP_URL }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          ALERT_SUBJECT: ${{ vars.ALERT_SUBJECT }}
+        run: ./tanaken-alert
+
+      - name: Upload announcement state
+        uses: actions/upload-artifact@v4
+        with:
+          name: japanese-ir-alert-state-${{ github.run_id }}
+          path: state/seen.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  persist-state:
+    needs: check
+    if: needs.check.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download announcement state
+        uses: actions/download-artifact@v4
+        with:
+          name: japanese-ir-alert-state-${{ github.run_id }}
+          path: state
+
+      - name: Commit announcement state if changed
+        run: |
+          set -eu
+          if git diff --quiet -- state/seen.txt && test -z "$(git ls-files --others --exclude-standard -- state/seen.txt)"; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/seen.txt
+          git commit -m "chore: update Japanese IR announcement state"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
