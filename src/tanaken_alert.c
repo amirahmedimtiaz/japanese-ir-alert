@@ -1323,6 +1323,8 @@ static int send_email(const char *smtp_url,
 {
     const char *subject = subject_override;
     const char *configured_subject;
+    const char *alert_company = NULL;
+    char generated_subject[256];
     TextBuffer message = {0};
     struct curl_slist *recipients = NULL;
     UploadData upload;
@@ -1331,12 +1333,34 @@ static int send_email(const char *smtp_url,
     char error_buffer[CURL_ERROR_SIZE] = {0};
     size_t index;
     size_t new_count = 0;
+    int multiple_companies = 0;
+
+    for (index = 0; index < announcements->count; index++) {
+        if (!state_contains(state, announcements->items[index].id)) {
+            new_count++;
+            if (alert_company == NULL) {
+                alert_company = announcements->items[index].company;
+            } else if (strcmp(alert_company, announcements->items[index].company) != 0) {
+                multiple_companies = 1;
+            }
+        }
+    }
+    if (new_count == 0) {
+        return 1;
+    }
 
     if (subject == NULL) {
-        subject = "[TANAKEN / Inuneko Seikatsu] New IR announcement";
         configured_subject = getenv("ALERT_SUBJECT");
         if (configured_subject != NULL && configured_subject[0] != '\0') {
             subject = configured_subject;
+        } else if (!multiple_companies && alert_company != NULL) {
+            (void)snprintf(generated_subject,
+                           sizeof(generated_subject),
+                           "[%s] New IR announcement",
+                           alert_company);
+            subject = generated_subject;
+        } else {
+            subject = "[TANAKEN / Inuneko Seikatsu] New IR announcements";
         }
     }
     if (has_header_injection(subject) || has_header_injection(from) || has_header_injection(to)) {
@@ -1347,16 +1371,6 @@ static int send_email(const char *smtp_url,
         curl_slist_free_all(recipients);
         print_error("ALERT_TO did not contain a valid recipient");
         return 0;
-    }
-
-    for (index = 0; index < announcements->count; index++) {
-        if (!state_contains(state, announcements->items[index].id)) {
-            new_count++;
-        }
-    }
-    if (new_count == 0) {
-        curl_slist_free_all(recipients);
-        return 1;
     }
 
     if (!buffer_append_format(&message, "From: %s\r\n", from) ||
@@ -1549,6 +1563,8 @@ int main(int argc, char **argv)
     int index;
     size_t latest_index = 0;
     size_t new_count = 0;
+    char generated_test_subject[256];
+    const char *test_subject;
     int exit_code = EXIT_FAILURE;
 
     tanaken_url = environment_or_default("TANAKEN_URL", DEFAULT_TANAKEN_URL);
@@ -1613,13 +1629,20 @@ int main(int argc, char **argv)
                                       &alert_to)) {
             goto cleanup;
         }
+        test_subject = getenv("TEST_SUBJECT");
+        if (test_subject == NULL || test_subject[0] == '\0') {
+            (void)snprintf(generated_test_subject,
+                           sizeof(generated_test_subject),
+                           "[%s] Latest IR announcement",
+                           announcements.items[latest_index].company);
+            test_subject = generated_test_subject;
+        }
         if (!send_email(smtp_url,
                         smtp_username,
                         smtp_password,
                         alert_from,
                         alert_to,
-                        environment_or_default("TEST_SUBJECT",
-                                               "[TANAKEN / Inuneko Seikatsu] Latest IR announcement"),
+                        test_subject,
                         &announcements,
                         &state)) {
             goto cleanup;

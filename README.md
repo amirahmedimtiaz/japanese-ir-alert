@@ -70,8 +70,8 @@ SMTP variables:
 - `SMTP_PASSWORD`: SMTP password or provider app password
 - `ALERT_FROM`: envelope sender and `From` header
 - `ALERT_TO`: one address, or comma/semicolon-separated addresses
-- `ALERT_SUBJECT`: optional normal-alert subject override
-- `TEST_SUBJECT`: optional `--test-latest` subject override
+- `ALERT_SUBJECT`: optional normal-alert subject override; leave unset for a company-specific subject
+- `TEST_SUBJECT`: optional `--test-latest` subject override; leave unset for a company-specific subject
 
 For Gmail, use an app password rather than the regular account password. Never commit SMTP credentials.
 
@@ -97,11 +97,11 @@ gh secret set ALERT_FROM
 gh secret set ALERT_TO
 ```
 
-Optionally set subjects as repository variables:
+Optionally set custom subjects as repository variables. Leave these variables unset to have the program identify the company automatically:
 
 ```sh
-gh variable set ALERT_SUBJECT --body "[TANAKEN / Inuneko Seikatsu] New IR announcement"
-gh variable set TEST_SUBJECT --body "[TANAKEN / Inuneko Seikatsu] Latest IR announcement"
+gh variable set ALERT_SUBJECT --body "New IR announcement"
+gh variable set TEST_SUBJECT --body "Latest IR announcement"
 ```
 
 Start and verify the workflow:
