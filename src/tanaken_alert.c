@@ -29,6 +29,7 @@
 #define DEFAULT_STATE_FILE "state/seen.txt"
 #define USER_AGENT "japanese-ir-alert/1.0"
 #define MAX_RESPONSE_BYTES (16U * 1024U * 1024U)
+#define FETCH_ATTEMPTS 3
 
 typedef struct {
     char *data;
@@ -231,11 +232,33 @@ static size_t page_write_callback(void *contents,
     return total;
 }
 
-static int fetch_page(const char *url, TextBuffer *response)
+static int retryable_fetch_failure(CURLcode result, long response_code)
+{
+    if (response_code >= 500 && response_code <= 599) {
+        return 1;
+    }
+
+    switch (result) {
+    case CURLE_COULDNT_RESOLVE_HOST:
+    case CURLE_COULDNT_CONNECT:
+    case CURLE_OPERATION_TIMEDOUT:
+    case CURLE_RECV_ERROR:
+    case CURLE_SEND_ERROR:
+    case CURLE_GOT_NOTHING:
+    case CURLE_PARTIAL_FILE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int fetch_page(const char *url, const char *source_name, TextBuffer *response)
 {
     CURL *curl;
     CURLcode result;
     char error_buffer[CURL_ERROR_SIZE] = {0};
+    long response_code = 0;
+    int attempt;
 
     curl = curl_easy_init();
     if (curl == NULL) {
@@ -258,12 +281,37 @@ static int fetch_page(const char *url, TextBuffer *response)
     (void)curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, page_write_callback);
     (void)curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
 
-    result = curl_easy_perform(curl);
-    if (result != CURLE_OK) {
+    for (attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+        response->length = 0;
+        if (response->data != NULL) {
+            response->data[0] = '\0';
+        }
+        error_buffer[0] = '\0';
+        response_code = 0;
+        result = curl_easy_perform(curl);
+        (void)curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (result == CURLE_OK && response->length > 0) {
+            curl_easy_cleanup(curl);
+            return 1;
+        }
+        if (attempt < FETCH_ATTEMPTS && retryable_fetch_failure(result, response_code)) {
+            sleep((unsigned int)attempt * 2U);
+            continue;
+        }
         if (error_buffer[0] != '\0') {
-            fprintf(stderr, "Error: could not fetch announcements: %s\n", error_buffer);
+            fprintf(stderr,
+                    "Error: could not fetch %s announcements: %s\n",
+                    source_name,
+                    error_buffer);
+        } else if (response_code != 0) {
+            fprintf(stderr,
+                    "Error: could not fetch %s announcements: HTTP %ld\n",
+                    source_name,
+                    response_code);
         } else {
-            fprintf(stderr, "Error: could not fetch announcements: %s\n",
+            fprintf(stderr,
+                    "Error: could not fetch %s announcements: %s\n",
+                    source_name,
                     curl_easy_strerror(result));
         }
         curl_easy_cleanup(curl);
@@ -271,7 +319,7 @@ static int fetch_page(const char *url, TextBuffer *response)
     }
 
     curl_easy_cleanup(curl);
-    return response->length > 0;
+    return 0;
 }
 
 static const char *find_in_range(const char *start,
@@ -1600,9 +1648,9 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    if (!fetch_page(tanaken_url, &tanaken_html) ||
+    if (!fetch_page(tanaken_url, "TANAKEN", &tanaken_html) ||
         !parse_tanaken_announcements(tanaken_html.data, &tanaken_source, &announcements) ||
-        !fetch_page(inuneko_api_url, &inuneko_json) ||
+        !fetch_page(inuneko_api_url, "Inuneko", &inuneko_json) ||
         !parse_inuneko_announcements(inuneko_json.data, &inuneko_source, &announcements)) {
         goto cleanup;
     }
